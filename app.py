@@ -15,6 +15,18 @@ from dash.dependencies import Input, Output
 import plotly.express as px
 import plotly.graph_objects as go
 import pandas as pd
+from sklearn.cluster import KMeans
+from sklearn.preprocessing import StandardScaler
+from sklearn.ensemble import RandomForestClassifier
+from sklearn.model_selection import train_test_split
+from sklearn.metrics import confusion_matrix
+from xgboost import XGBClassifier
+import numpy as np
+
+
+
+
+
 
 app = dash.Dash(__name__)
 server = app.server
@@ -22,7 +34,7 @@ server = app.server
 
 
 
-df = pd.read_csv("base_datos_ventas_flores_sucias.csv")
+df = pd.read_csv("df_final_flores.csv")
 
 
 
@@ -31,7 +43,7 @@ df = pd.read_csv("base_datos_ventas_flores_sucias.csv")
 # CARGAR DATASET
 # ======================================================
 
-df = pd.read_csv("base_datos_ventas_flores_sucias.csv")
+df = pd.read_csv("df_final_flores.csv")
 
 # ======================================================
 # LIMPIEZA
@@ -256,7 +268,54 @@ app.layout = html.Div([
     style={
         "display": "flex",
         "justifyContent": "space-between"
-    })
+    }),
+
+    # ==================================================
+    # SECCION MACHINE LEARNING
+    # ==================================================
+
+    html.H2(
+        "🤖 Modelos de Machine Learning",
+        style={
+            "color": "white",
+            "marginTop": "40px",
+            "textAlign": "center"
+        }
+    ),
+
+    html.Div([
+
+        html.Div([
+            dcc.Graph(id="clusters")
+        ], style={"width": "49%"}),
+
+        html.Div([
+            dcc.Graph(id="comparacion_modelos")
+        ], style={"width": "49%"})
+
+    ],
+    style={
+        "display": "flex",
+        "justifyContent": "space-between"
+    }),
+
+    html.Div([
+
+        html.Div([
+            dcc.Graph(id="rf_confusion")
+        ], style={"width": "49%"}),
+
+        html.Div([
+            dcc.Graph(id="xgb_confusion")
+        ], style={"width": "49%"})
+
+    ],
+    style={
+        "display": "flex",
+        "justifyContent": "space-between"
+    }),
+
+    dcc.Graph(id="importancias")
 
 ],
 style={
@@ -279,7 +338,12 @@ style={
         Output("boxplot", "figure"),
         Output("scatter", "figure"),
         Output("pie", "figure"),
-        Output("heatmap", "figure")
+        Output("heatmap", "figure"),
+        Output("clusters", "figure"),
+        Output("comparacion_modelos", "figure"),
+        Output("rf_confusion", "figure"),
+        Output("xgb_confusion", "figure"),
+        Output("importancias", "figure")
     ],
 
     [
@@ -481,6 +545,169 @@ def actualizar_dashboard(tiendas, categorias, anios):
     )
 
     # ==================================================
+    # MACHINE LEARNING - FEATURES BASE
+    # ==================================================
+
+    features_ml = [
+        "Cantidad",
+        "Costo_Unitario",
+        "Costo_Total",
+        "Precio_Venta_Unitario",
+        "Ingreso_Total",
+        "Ganancia_Neta"
+    ]
+
+    dff_ml = dff[features_ml].dropna()
+
+    # ==================================================
+    # CLUSTERING K-MEANS
+    # ==================================================
+
+    scaler = StandardScaler()
+    X_scaled = scaler.fit_transform(dff_ml)
+
+    kmeans = KMeans(n_clusters=3, random_state=42, n_init=10)
+    clusters = kmeans.fit_predict(X_scaled)
+
+    dff_cluster = dff_ml.copy()
+    dff_cluster["Cluster"] = clusters.astype(str)
+
+    fig_clusters = px.scatter(
+        dff_cluster,
+        x="Ingreso_Total",
+        y="Ganancia_Neta",
+        color="Cluster",
+        size="Cantidad",
+        title="🔵 Clustering K-Means (k=3)",
+        labels={"Cluster": "Segmento"}
+    )
+
+    fig_clusters.update_layout(template="plotly_dark")
+
+    # ==================================================
+    # CLASIFICACION - PREPARAR TARGET
+    # ==================================================
+
+    mediana_ganancia = dff_ml["Ganancia_Neta"].median()
+    y = (dff_ml["Ganancia_Neta"] >= mediana_ganancia).astype(int)
+    X = dff_ml.drop(columns=["Ganancia_Neta"])
+
+    X_train, X_test, y_train, y_test = train_test_split(
+        X, y, test_size=0.2, random_state=42
+    )
+
+    # ==================================================
+    # RANDOM FOREST
+    # ==================================================
+
+    rf = RandomForestClassifier(n_estimators=100, random_state=42)
+    rf.fit(X_train, y_train)
+    acc_rf = rf.score(X_test, y_test)
+
+    cm_rf = confusion_matrix(y_test, rf.predict(X_test))
+
+    fig_rf_confusion = go.Figure(
+
+        data=go.Heatmap(
+            z=cm_rf,
+            x=["Pred: Baja", "Pred: Alta"],
+            y=["Real: Baja", "Real: Alta"],
+            colorscale="Blues",
+            text=cm_rf,
+            texttemplate="%{text}",
+            showscale=True
+        )
+
+    )
+
+    fig_rf_confusion.update_layout(
+        title=f"🌲 Confusion Matrix - Random Forest (Acc: {acc_rf:.2%})",
+        template="plotly_dark"
+    )
+
+    # ==================================================
+    # XGBOOST
+    # ==================================================
+
+    xgb = XGBClassifier(
+        n_estimators=100,
+        random_state=42,
+        eval_metric="logloss",
+        verbosity=0
+    )
+
+    xgb.fit(X_train, y_train)
+    acc_xgb = xgb.score(X_test, y_test)
+
+    cm_xgb = confusion_matrix(y_test, xgb.predict(X_test))
+
+    fig_xgb_confusion = go.Figure(
+
+        data=go.Heatmap(
+            z=cm_xgb,
+            x=["Pred: Baja", "Pred: Alta"],
+            y=["Real: Baja", "Real: Alta"],
+            colorscale="Greens",
+            text=cm_xgb,
+            texttemplate="%{text}",
+            showscale=True
+        )
+
+    )
+
+    fig_xgb_confusion.update_layout(
+        title=f"⚡ Confusion Matrix - XGBoost (Acc: {acc_xgb:.2%})",
+        template="plotly_dark"
+    )
+
+    # ==================================================
+    # COMPARACION DE MODELOS
+    # ==================================================
+
+    modelos_df = pd.DataFrame({
+        "Modelo": ["Random Forest", "XGBoost"],
+        "Accuracy": [acc_rf, acc_xgb]
+    })
+
+    fig_comparacion = px.bar(
+        modelos_df,
+        x="Modelo",
+        y="Accuracy",
+        color="Modelo",
+        text="Accuracy",
+        title="📊 Comparación de Modelos",
+        range_y=[0, 1]
+    )
+
+    fig_comparacion.update_traces(
+        texttemplate="%{text:.2%}",
+        textposition="outside"
+    )
+
+    fig_comparacion.update_layout(template="plotly_dark")
+
+    # ==================================================
+    # IMPORTANCIA DE VARIABLES (RANDOM FOREST)
+    # ==================================================
+
+    importancias_df = pd.DataFrame({
+        "Variable": X.columns,
+        "Importancia": rf.feature_importances_
+    }).sort_values("Importancia", ascending=True)
+
+    fig_importancias = px.bar(
+        importancias_df,
+        x="Importancia",
+        y="Variable",
+        orientation="h",
+        title="🔍 Importancia de Variables - Random Forest",
+        color="Importancia",
+        color_continuous_scale="Viridis"
+    )
+
+    fig_importancias.update_layout(template="plotly_dark")
+
+    # ==================================================
     # RETURN
     # ==================================================
 
@@ -492,8 +719,14 @@ def actualizar_dashboard(tiendas, categorias, anios):
         fig_box,
         fig_scatter,
         fig_pie,
-        fig_heatmap
+        fig_heatmap,
+        fig_clusters,
+        fig_comparacion,
+        fig_rf_confusion,
+        fig_xgb_confusion,
+        fig_importancias
     )
+
 
 # ======================================================
 # EJECUTAR
@@ -501,405 +734,3 @@ def actualizar_dashboard(tiendas, categorias, anios):
 
 if __name__ == "__main__":
     app.run(debug=True, port=8051)
-
-import pandas as pd
-import dash
-from dash import dcc, html
-from dash.dependencies import Input, Output
-import plotly.express as px
-
-# =========================
-# CARGAR DATOS
-# =========================
-df = pd.read_csv("base_datos_ventas_flores_sucias.csv")
-
-# =========================
-# LIMPIEZA BÁSICA
-# =========================
-df_limpio = df.copy()
-
-# Eliminar nulos
-df_limpio = df_limpio.dropna()
-
-# Convertir fecha
-df_limpio["Fecha"] = pd.to_datetime(df_limpio["Fecha"])
-
-# =========================
-# INICIALIZAR APP
-# =========================
-app = dash.Dash(__name__)
-
-# =========================
-# LAYOUT
-# =========================
-app.layout = html.Div([
-
-    html.H1(
-        "Dashboard de Ventas - Florerías",
-        style={
-            "textAlign": "center",
-            "color": "#2E4053",
-            "marginBottom": "20px"
-        }
-    ),
-
-    html.Div([
-        html.P("""
-        Este tablero permite analizar el comportamiento de ventas,
-        ingresos y ganancias de diferentes categorías de flores
-        en múltiples tiendas durante los años 2024-2025.
-        """)
-    ],
-    style={
-        "backgroundColor": "#F8F9F9",
-        "padding": "15px",
-        "borderRadius": "10px",
-        "marginBottom": "20px"
-    }),
-
-    # =========================
-    # FILTROS
-    # =========================
-    html.Div([
-
-        html.Div([
-            html.Label("Seleccionar Tienda"),
-            dcc.Dropdown(
-                id='filtro_tienda',
-                options=[
-                    {"label": tienda, "value": tienda}
-                    for tienda in df_limpio["Tienda"].unique()
-                ],
-                value=df_limpio["Tienda"].unique().tolist(),
-                multi=True
-            )
-        ], style={"width": "48%"}),
-
-        html.Div([
-            html.Label("Seleccionar Categoría"),
-            dcc.Dropdown(
-                id='filtro_categoria',
-                options=[
-                    {"label": cat, "value": cat}
-                    for cat in df_limpio["Categoría"].unique()
-                ],
-                value=df_limpio["Categoría"].unique().tolist(),
-                multi=True
-            )
-        ], style={"width": "48%"})
-
-    ],
-    style={
-        "display": "flex",
-        "justifyContent": "space-between",
-        "marginBottom": "30px"
-    }),
-
-    # =========================
-    # KPIs
-    # =========================
-    html.Div(id='kpis',
-             style={
-                 "display": "flex",
-                 "justifyContent": "space-around",
-                 "marginBottom": "30px"
-             }),
-
-    # =========================
-    # GRÁFICOS
-    # =========================
-
-    dcc.Graph(id='grafico_boxplots'),
-
-    dcc.Graph(id='grafico_barras'),
-
-    dcc.Graph(id='grafico_ingresos'),
-
-    dcc.Graph(id='grafico_correlacion')
-
-],
-style={
-    "padding": "30px",
-    "fontFamily": "Arial"
-})
-
-# =========================
-# CALLBACK
-# =========================
-@app.callback(
-    [
-        Output('kpis', 'children'),
-        Output('grafico_boxplots', 'figure'),
-        Output('grafico_barras', 'figure'),
-        Output('grafico_ingresos', 'figure'),
-        Output('grafico_correlacion', 'figure')
-    ],
-
-    [
-        Input('filtro_tienda', 'value'),
-        Input('filtro_categoria', 'value')
-    ]
-)
-
-def actualizar_dashboard(tiendas, categorias):
-
-    # Filtrar datos
-    dff = df_limpio[
-        (df_limpio["Tienda"].isin(tiendas)) &
-        (df_limpio["Categoría"].isin(categorias))
-    ]
-
-    # =========================
-    # KPIs
-    # =========================
-    ventas_totales = dff["Cantidad"].sum()
-    ingresos = dff["Ingreso_Total"].sum()
-    ganancias = dff["Ganancia_Neta"].sum()
-
-    kpis = [
-
-        html.Div([
-            html.H3("Unidades Vendidas"),
-            html.H2(f"{ventas_totales:,.0f}")
-        ],
-        style={
-            "backgroundColor": "#D5F5E3",
-            "padding": "20px",
-            "borderRadius": "10px",
-            "width": "30%",
-            "textAlign": "center"
-        }),
-
-        html.Div([
-            html.H3("Ingresos Totales"),
-            html.H2(f"${ingresos:,.0f}")
-        ],
-        style={
-            "backgroundColor": "#D6EAF8",
-            "padding": "20px",
-            "borderRadius": "10px",
-            "width": "30%",
-            "textAlign": "center"
-        }),
-
-        html.Div([
-            html.H3("Ganancia Neta"),
-            html.H2(f"${ganancias:,.0f}")
-        ],
-        style={
-            "backgroundColor": "#FADBD8",
-            "padding": "20px",
-            "borderRadius": "10px",
-            "width": "30%",
-            "textAlign": "center"
-        })
-
-    ]
-
-    # =========================
-    # BOXPLOTS
-    # =========================
-    fig_box = px.box(
-        dff,
-        x="Cantidad",
-        points="outliers",
-        title="Detección de Outliers en Cantidad"
-    )
-
-    # =========================
-    # BARRAS
-    # =========================
-    ventas_categoria = dff.groupby("Categoría")[
-        ["Cantidad", "Ganancia_Neta"]
-    ].sum().reset_index()
-
-    fig_bar = px.bar(
-        ventas_categoria,
-        x="Categoría",
-        y=["Cantidad", "Ganancia_Neta"],
-        barmode="group",
-        title="Ventas y Ganancias por Categoría"
-    )
-
-    # =========================
-    # INGRESOS POR TIENDA
-    # =========================
-    fig_ingresos = px.box(
-        dff,
-        x="Tienda",
-        y="Ingreso_Total",
-        color="Categoría",
-        title="Distribución de Ingresos por Tienda y Categoría"
-    )
-
-    # =========================
-    # MATRIZ DE CORRELACIÓN
-    # =========================
-    columnas_num = [
-        'Cantidad',
-        'Costo_Unitario',
-        'Costo_Total',
-        'Precio_Venta_Unitario',
-        'Ingreso_Total',
-        'Ganancia_Neta'
-    ]
-
-    matriz_corr = dff[columnas_num].corr()
-
-    fig_corr = px.imshow(
-        matriz_corr,
-        text_auto=True,
-        color_continuous_scale='RdBu',
-        title='Matriz de Correlación'
-    )
-
-    return kpis, fig_box, fig_bar, fig_ingresos, fig_corr
-
-    # ==================================================
-    # LINEA TEMPORAL
-    # ==================================================
-
-    ventas_fecha = dff.groupby("Fecha")["Ingreso_Total"].sum().reset_index()
-
-    fig_linea = px.line(
-        ventas_fecha,
-        x="Fecha",
-        y="Ingreso_Total",
-        title="Evolución Temporal de Ventas"
-    )
-
-    fig_linea.update_layout(template="plotly_dark")
-
-    # ==================================================
-    # BARRAS CATEGORIA
-    # ==================================================
-
-    categoria = dff.groupby("Categoría")[
-        "Ganancia_Neta"
-    ].sum().reset_index()
-
-    fig_categoria = px.bar(
-        categoria,
-        x="Categoría",
-        y="Ganancia_Neta",
-        color="Categoría",
-        title="Ganancia por Categoría"
-    )
-
-    fig_categoria.update_layout(template="plotly_dark")
-
-    # ==================================================
-    # BARRAS TIENDAS
-    # ==================================================
-
-    tiendas_df = dff.groupby("Tienda")[
-        "Ingreso_Total"
-    ].sum().reset_index()
-
-    fig_tienda = px.bar(
-        tiendas_df,
-        x="Tienda",
-        y="Ingreso_Total",
-        color="Tienda",
-        title="Ingresos por Tienda"
-    )
-
-    fig_tienda.update_layout(template="plotly_dark")
-
-    # ==================================================
-    # BOXPLOT
-    # ==================================================
-
-    fig_box = px.box(
-        dff,
-        x="Categoría",
-        y="Ingreso_Total",
-        color="Categoría",
-        title="Distribución de Ingresos"
-    )
-
-    fig_box.update_layout(template="plotly_dark")
-
-    # ==================================================
-    # SCATTER
-    # ==================================================
-
-    fig_scatter = px.scatter(
-        dff,
-        x="Costo_Unitario",
-        y="Precio_Venta_Unitario",
-        size="Ganancia_Neta",
-        color="Categoría",
-        hover_data=["Tienda"],
-        title="Relación Costos vs Precio"
-    )
-
-    fig_scatter.update_layout(template="plotly_dark")
-
-    # ==================================================
-    # PIE CHART
-    # ==================================================
-
-    pie_df = dff.groupby("Categoría")[
-        "Ingreso_Total"
-    ].sum().reset_index()
-
-    fig_pie = px.pie(
-        pie_df,
-        names="Categoría",
-        values="Ingreso_Total",
-        title="Participación de Ventas"
-    )
-
-    fig_pie.update_layout(template="plotly_dark")
-
-    # ==================================================
-    # HEATMAP
-    # ==================================================
-
-    columnas = [
-        'Cantidad',
-        'Costo_Unitario',
-        'Costo_Total',
-        'Precio_Venta_Unitario',
-        'Ingreso_Total',
-        'Ganancia_Neta'
-    ]
-
-    corr = dff[columnas].corr()
-
-    fig_heatmap = go.Figure(data=go.Heatmap(
-        z=corr.values,
-        x=corr.columns,
-        y=corr.columns,
-        colorscale='RdBu',
-        zmin=-1,
-        zmax=1
-    ))
-
-    fig_heatmap.update_layout(
-        title="Matriz de Correlación",
-        template="plotly_dark"
-    )
-
-    return (
-        kpis,
-        fig_linea,
-        fig_categoria,
-        fig_tienda,
-        fig_box,
-        fig_scatter,
-        fig_pie,
-        fig_heatmap
-    )
-
-# =========================
-# EJECUTAR APP
-# =========================
-if __name__ == '__main__':
-    app.run(debug=True, port=8051)
-    
-    
-
-    
-
