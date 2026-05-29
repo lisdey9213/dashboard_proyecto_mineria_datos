@@ -228,12 +228,20 @@ app.layout = html.Div([
 )
 def actualizar_dashboard(tiendas, categorias, anios):
 
-    # FILTRAR
+    # FILTRAR — proteger listas None o vacías
+    tiendas    = tiendas    or df["Tienda"].unique().tolist()
+    categorias = categorias or df["Categoría"].unique().tolist()
+    anios      = anios      or sorted(df["Año"].unique())
+
     dff = df[
         (df["Tienda"].isin(tiendas)) &
         (df["Categoría"].isin(categorias)) &
         (df["Año"].isin(anios))
     ]
+
+    # Si no hay datos tras el filtro, usar el dataset completo
+    if dff.empty:
+        dff = df.copy()
 
     # --------------------------------------------------
     # KPIs
@@ -307,9 +315,13 @@ def actualizar_dashboard(tiendas, categorias, anios):
 
     # Clusters scatter (filtrado)
     dff_ml_filt = dff[FEATURES_ML].dropna().copy()
-    dff_ml_filt["Cluster"] = _kmeans.predict(
-        _scaler.transform(dff_ml_filt)
-    ).astype(str)
+
+    if len(dff_ml_filt) > 0:
+        dff_ml_filt["Cluster"] = _kmeans.predict(
+            _scaler.transform(dff_ml_filt)
+        ).astype(str)
+    else:
+        dff_ml_filt["Cluster"] = "0"
 
     fig_clusters = px.scatter(
         dff_ml_filt, x="Ingreso_Total", y="Ganancia_Neta",
@@ -362,9 +374,13 @@ def actualizar_dashboard(tiendas, categorias, anios):
 
     # Distribucion flores por cluster (filtrado)
     dff_cat = dff[FEATURES_ML + ["Categoría"]].dropna().copy()
-    dff_cat["Cluster"] = "Cluster " + _kmeans.predict(
-        _scaler.transform(dff_cat[FEATURES_ML])
-    ).astype(str)
+
+    if len(dff_cat) > 0:
+        dff_cat["Cluster"] = "Cluster " + _kmeans.predict(
+            _scaler.transform(dff_cat[FEATURES_ML])
+        ).astype(str)
+    else:
+        dff_cat["Cluster"] = "Cluster 0"
 
     fig_dist = px.bar(
         dff_cat.groupby(["Cluster","Categoría"]).size().reset_index(name="Frecuencia"),
